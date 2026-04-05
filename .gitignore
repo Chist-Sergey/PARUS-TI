@@ -138,11 +138,14 @@ celerybeat.pid
 .env
 .envrc
 .venv
+.venv_dev
 env/
 venv/
+venv_dev/
 ENV/
 env.bak/
 venv.bak/
+venv_dev.bak/
 
 # Spyder project settings
 .spyderproject
@@ -205,3 +208,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# MacOC
+.DS_Store
