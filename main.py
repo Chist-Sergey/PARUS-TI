@@ -1,13 +1,57 @@
 import fastapi
 import httpx
 import pytest
+import re
 
 APP = fastapi.FastAPI()
 BASE_URL = "/api/v1/search"
 
 @APP.get(BASE_URL)
-async def search(query: str) -> dict:
-    return {"query": query}
+async def search(query: str) -> list:
+    indicator_type: str
+    query_length_current = len(query)
+    query_length_max = 255
+
+    if not query:
+        raise fastapi.HTTPException(422, "Пустой запрос")
+
+    # защита от RegEx DoS
+    elif query_length_current > query_length_max:
+        raise fastapi.HTTPException(status_code=422, detail=f" Запрос слишком длинный. Максимальная длина составляет {query_length_max} символов, но вы указали {query_length_current} символов.")
+
+    # валидация запроса для:
+    # IP v6
+    elif re.match(r"^[A-Fa-f0-9]{1,4}(:[A-Fa-f0-9]{1,4}){7}$", query):
+        indicator_type = "IP"
+
+    # сбрасываем нагрузку с RegEx
+    # для остальных запросов регистр не важен
+    query = query.lower()
+
+    # Hash RSA256
+    if re.match(r"^[a-f0-9]{64}$", query):
+        indicator_type = "Hash"
+
+    # URL
+    elif re.match(r"^(ftp|http|https)://[a-z0-9.-]+\.[a-z]{2,6}$", query):
+        indicator_type = "URL"
+
+    # IP v4
+    elif re.match(r"^([0-9]{1,3}\.){3}[0-9]{1,3}$", query):
+        indicator_type = "IP"
+
+    # Domain
+    elif re.match(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?)*\.[a-z]{2,}$", query):
+        indicator_type = "Domain"
+
+    else:
+        raise fastapi.HTTPException(status_code=422, detail="Неверный формат запроса. Допустимые форматы: Hash (RSA256), IP, Domain, URL.")
+
+    # mock data
+    if query == "parus.ti":
+        return [{"type": "Domain", "value": "parus.ti"}]
+
+    raise fastapi.HTTPException(status_code=404, detail="Не найдено результатов")
 
 
 @pytest.fixture
