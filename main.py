@@ -60,6 +60,7 @@ async def lifespan(app: fastapi.FastAPI):
 
     DATABASE_CONNECTIONS.clear()
 
+
 APP = fastapi.FastAPI(lifespan=lifespan)
 BASE_URL = "/api/v1/search"
 @APP.get(BASE_URL)
@@ -103,11 +104,45 @@ async def search(query: str) -> list:
     else:
         raise fastapi.HTTPException(status_code=422, detail="Неверный формат запроса. Допустимые форматы: Hash (RSA256), IP, Domain, URL.")
 
-    # mock data
-    if query == "parus.ti":
-        return [{"type": "Domain", "value": "parus.ti"}]
+    aql_query = """
+LET start_vertex = FIRST(
+    FOR doc IN indicators
+        FILTER doc.value == @indicator_value
+        AND doc.type == @indicator_type
+        LIMIT 1
+        RETURN doc
+)
 
-    raise fastapi.HTTPException(status_code=404, detail="Не найдено результатов")
+FILTER start_vertex != NULL
+
+FOR v, e, p IN 1..2 ANY start_vertex._id GRAPH 'intelligence'
+    OPTIONS {
+        bfs: true,
+        uniqueVertices: 'global',
+        uniqueEdges: 'path'
+    }
+    RETURN {
+        start: start_vertex,
+        vertex: v,
+        edge: e,
+        path: p
+    }
+"""
+
+    cursor = await DATABASE_CONNECTIONS["parus"].aql.execute(
+        aql_query,
+        bind_vars={
+            "indicator_value": query,
+            "indicator_type": indicator_type.lower()
+        },
+        batch_size=100,
+        count=False
+    )
+
+    if not cursor.has_more:
+        raise fastapi.HTTPException(status_code=404, detail=f"Не найдено результатов для такого {indicator_type}")
+
+    return [doc async for doc in cursor]
 
 
 @pytest.fixture
