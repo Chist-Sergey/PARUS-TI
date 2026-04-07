@@ -55,6 +55,42 @@ async def lifespan(app: fastapi.FastAPI):
         },
     )
 
+
+    indicators_data = [
+        {"type": "ip", "value": "192.168.1.1"},
+        {"type": "domain", "value": "example.com"},
+        {"type": "url", "value": "https://example.com/page"},
+        {"type": "hash", "value": "a1b2c3d4e5f6"}
+    ]
+    for indicator in indicators_data:
+        try:
+            await indicators.insert(indicator)
+        except arangoasync.exceptions.DocumentInsertError:
+            pass
+
+    relations_data = [
+        {
+            "_from": indicators_data[0],
+            "_to": indicators_data[1],
+            "type": "resolves"
+        },
+        {
+            "_from": indicators_data[1],
+            "_to": indicators_data[2],
+            "type": "hosted_on"
+        },
+        {
+            "_from": indicators_data[2],
+            "_to": indicators_data[3],
+            "type": "downloaded_from"
+        }
+    ]
+    for relation in relations_data:
+        try:
+            await graph.insert(relation)
+        except arangoasync.exceptions.DocumentInsertError:
+            pass
+
     DATABASE_CONNECTIONS["parus"] = db
 
     yield
