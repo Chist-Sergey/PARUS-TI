@@ -4,6 +4,7 @@ import re
 import fastapi
 import contextlib
 import arangoasync
+import arangoasync.exceptions
 import arangoasync.auth
 import asgi_lifespan
 
@@ -31,65 +32,57 @@ async def lifespan(app: fastapi.FastAPI):
             username="root", password="root"
         )
     )
-    if not await db.has_graph("intelligence"):
-        await db.create_graph("intelligence")
 
-    graph = db.graph("intelligence")
-    if not await graph.has_vertex_collection("indicators"):
-        await graph.create_vertex_collection("indicators")
+    try:
+        await db.create_collection("indicators", col_type="document")
+    except arangoasync.exceptions.CollectionCreateError:
+        pass
 
-    if not await graph.has_edge_definition("relations"):
-        await graph.create_edge_definition(
-            edge_collection="relations",
-            from_vertex_collections=["indicators"],
-            to_vertex_collections=["indicators"]
+    try:
+        await db.create_collection("relations", col_type="edge")
+    except arangoasync.exceptions.CollectionCreateError:
+        pass
+
+    try:
+        await db.collection("indicators").add_index(
+            type="persistent",
+            fields=["type", "value"],
+            options={"unique": True}
         )
+    except arangoasync.exceptions.IndexCreateError:
+        pass
 
-    indicators = db.collection("indicators")
-    await indicators.add_index(
-        type="persistent",
-        fields=["hash", "value"],
-        options={
-            "unique":True,
-            "name": "my_index"
-        },
-    )
+    await db.aql.execute("""
+LET indicators = [
+{ type: "ip", value: "192.168.1.1" },
+{ type: "domain", value: "example.com" },
+{ type: "url", value: "https://example.com/page" },
+{ type: "hash", value: "a1b2c3d4e5f6" }
+]
 
+LET docs = (
+FOR i IN indicators
+    UPSERT { type: i.type, value: i.value }
+    INSERT i
+    UPDATE {} IN indicators
+    RETURN NEW
+)
 
-    indicators_data = [
-        {"type": "ip", "value": "192.168.1.1"},
-        {"type": "domain", "value": "example.com"},
-        {"type": "url", "value": "https://example.com/page"},
-        {"type": "hash", "value": "a1b2c3d4e5f6"}
-    ]
-    for indicator in indicators_data:
-        try:
-            await indicators.insert(indicator)
-        except arangoasync.exceptions.DocumentInsertError:
-            pass
+LET edges = [
+{ from: docs[0]._id, to: docs[1]._id, type: "resolves" },
+{ from: docs[1]._id, to: docs[2]._id, type: "hosted_on" },
+{ from: docs[2]._id, to: docs[3]._id, type: "downloaded_from" }
+]
 
-    relations_data = [
-        {
-            "_from": indicators_data[0],
-            "_to": indicators_data[1],
-            "type": "resolves"
-        },
-        {
-            "_from": indicators_data[1],
-            "_to": indicators_data[2],
-            "type": "hosted_on"
-        },
-        {
-            "_from": indicators_data[2],
-            "_to": indicators_data[3],
-            "type": "downloaded_from"
-        }
-    ]
-    for relation in relations_data:
-        try:
-            await graph.insert(relation)
-        except arangoasync.exceptions.DocumentInsertError:
-            pass
+FOR e IN edges
+UPSERT { _from: e.from, _to: e.to, type: e.type }
+    INSERT {
+    _from: e.from,
+    _to: e.to,
+    type: e.type
+    }
+    UPDATE {} IN relations
+""")
 
     DATABASE_CONNECTIONS["parus"] = db
 
