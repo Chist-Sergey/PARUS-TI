@@ -1,11 +1,43 @@
-import fastapi
-import httpx
 import pytest
+import httpx
 import re
+import fastapi
+import contextlib
+import arangoasync
+import arangoasync.auth
 
-APP = fastapi.FastAPI()
+
+DATABASE_CONNECTIONS = {}
+@contextlib.asynccontextmanager
+async def lifespan(app: fastapi.FastAPI):
+    client = arangoasync.ArangoClient(
+        hosts=["http://127.0.0.1:8529"]
+    )
+
+    system_db = await client.db(
+        "_system",
+        auth=arangoasync.auth.Auth(
+            username="root",
+            password="root"
+        )
+    )
+    if not await system_db.has_database("parus"):
+        await system_db.create_database("parus")
+
+    db = await client.db(
+        "parus",
+        auth=arangoasync.auth.Auth(
+            username="root", password="root"
+        )
+    )
+    DATABASE_CONNECTIONS["parus"] = db
+
+    yield
+
+    DATABASE_CONNECTIONS.clear()
+
+APP = fastapi.FastAPI(lifespan=lifespan)
 BASE_URL = "/api/v1/search"
-
 @APP.get(BASE_URL)
 async def search(query: str) -> list:
     indicator_type: str
