@@ -30,6 +30,30 @@ async def lifespan(app: fastapi.FastAPI):
             username="root", password="root"
         )
     )
+    if not await db.has_graph("intelligence"):
+        await db.create_graph("intelligence")
+
+    graph = db.graph("intelligence")
+    if not await graph.has_vertex_collection("indicators"):
+        await graph.create_vertex_collection("indicators")
+
+    if not await graph.has_edge_definition("relations"):
+        await graph.create_edge_definition(
+            edge_collection="relations",
+            from_vertex_collections=["indicators"],
+            to_vertex_collections=["indicators"]
+        )
+
+    indicators = db.collection("indicators")
+    await indicators.add_index(
+        type="persistent",
+        fields=["hash", "value"],
+        options={
+            "unique":True,
+            "name": "my_index"
+        },
+    )
+
     DATABASE_CONNECTIONS["parus"] = db
 
     yield
