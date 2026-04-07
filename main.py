@@ -177,6 +177,13 @@ async def test_search_should_accept_valid_domain(async_client):
     assert 404 == response.status_code
 
 @pytest.mark.anyio
+async def test_search_should_accept_valid_ip(async_client):
+    response = await async_client.get(
+        BASE_URL + "?query=192.168.9.1"
+    )
+    assert 404 == response.status_code
+
+@pytest.mark.anyio
 async def test_search_should_accept_mixed_case_query(async_client):
     response = await async_client.get(
         BASE_URL + "?query=CraZy.cOm"
@@ -198,11 +205,18 @@ async def test_search_should_return_not_found(async_client):
     assert 404 == response.status_code
 
 @pytest.mark.anyio
+async def test_search_should_return_dict(async_client):
+    response = await async_client.get(
+        BASE_URL + "?query=b00b5.free"
+    )
+    assert dict == type(response.json())
+
+@pytest.mark.anyio
 async def test_search_should_return_list(async_client):
     response = await async_client.get(
-        BASE_URL + "?query=parus.ti"
+        BASE_URL + "?query=192.168.1.1"
     )
-    assert type(response.json()) == list
+    assert list == type(response.json())
 
 @pytest.mark.anyio
 async def test_search_route_should_exist(async_client):
@@ -244,13 +258,6 @@ async def test_search_should_reject_invalid_url(async_client):
         BASE_URL + "?query=ftq://parus.ti"
     )
     assert 422 == response.status_code
-
-@pytest.mark.anyio
-async def test_search_should_return_graph(async_client):
-    response = await async_client.get(
-        BASE_URL + "?query=parus.ti"
-    )
-    assert response.json() is not None
 
 @pytest.mark.anyio
 async def test_search_should_reject_query_with_whitespace(async_client):
