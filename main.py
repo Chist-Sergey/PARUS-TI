@@ -5,6 +5,7 @@ import fastapi
 import contextlib
 import arangoasync
 import arangoasync.auth
+import asgi_lifespan
 
 
 DATABASE_CONNECTIONS = {}
@@ -147,11 +148,12 @@ FOR v, e, p IN 1..2 ANY start_vertex._id GRAPH 'intelligence'
 
 @pytest.fixture
 async def async_client():
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=APP),
-        base_url="http://127.0.0.1:8000"
-    ) as client:
-        yield client
+    async with asgi_lifespan.LifespanManager(APP) as manager:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=APP),
+            base_url="http://127.0.0.1:8000"
+        ) as client:
+            yield client
 
 @pytest.mark.anyio
 async def test_search_should_accept_valid_url(async_client):
