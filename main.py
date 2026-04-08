@@ -1,11 +1,72 @@
-import fastapi
-import httpx
 import pytest
+import httpx
 import re
+import fastapi
+import contextlib
+import arangoasync
+import arangoasync.auth
+import asgi_lifespan
 
-APP = fastapi.FastAPI()
+
+DATABASE_CONNECTIONS = {}
+@contextlib.asynccontextmanager
+async def lifespan(app: fastapi.FastAPI):
+    client = arangoasync.ArangoClient(
+        hosts=[
+            "http://127.0.0.1:8529",
+            "http://arangodb:8529"
+        ]
+    )
+
+    system_db = await client.db(
+        "_system",
+        auth=arangoasync.auth.Auth(
+            username="root",
+            password="root"
+        )
+    )
+    if not await system_db.has_database("parus"):
+        await system_db.create_database("parus")
+
+    db = await client.db(
+        "parus",
+        auth=arangoasync.auth.Auth(
+            username="root", password="root"
+        )
+    )
+    if not await db.has_graph("intelligence"):
+        await db.create_graph("intelligence")
+
+    graph = db.graph("intelligence")
+    if not await graph.has_vertex_collection("indicators"):
+        await graph.create_vertex_collection("indicators")
+
+    if not await graph.has_edge_definition("relations"):
+        await graph.create_edge_definition(
+            edge_collection="relations",
+            from_vertex_collections=["indicators"],
+            to_vertex_collections=["indicators"]
+        )
+
+    indicators = db.collection("indicators")
+    await indicators.add_index(
+        type="persistent",
+        fields=["hash", "value"],
+        options={
+            "unique":True,
+            "name": "my_index"
+        },
+    )
+
+    DATABASE_CONNECTIONS["parus"] = db
+
+    yield
+
+    DATABASE_CONNECTIONS.clear()
+
+
+APP = fastapi.FastAPI(lifespan=lifespan)
 BASE_URL = "/api/v1/search"
-
 @APP.get(BASE_URL)
 async def search(query: str) -> list:
     indicator_type: str
@@ -47,20 +108,55 @@ async def search(query: str) -> list:
     else:
         raise fastapi.HTTPException(status_code=422, detail="Неверный формат запроса. Допустимые форматы: Hash (RSA256), IP, Domain, URL.")
 
-    # mock data
-    if query == "parus.ti":
-        return [{"type": "Domain", "value": "parus.ti"}]
+    aql_query = """
+LET start_vertex = FIRST(
+    FOR doc IN indicators
+        FILTER doc.value == @indicator_value
+        AND doc.type == @indicator_type
+        LIMIT 1
+        RETURN doc
+)
 
-    raise fastapi.HTTPException(status_code=404, detail="Не найдено результатов")
+FILTER start_vertex != NULL
+
+FOR v, e, p IN 1..2 ANY start_vertex._id GRAPH 'intelligence'
+    OPTIONS {
+        bfs: true,
+        uniqueVertices: 'global',
+        uniqueEdges: 'path'
+    }
+    RETURN {
+        start: start_vertex,
+        vertex: v,
+        edge: e,
+        path: p
+    }
+"""
+
+    cursor = await DATABASE_CONNECTIONS["parus"].aql.execute(
+        aql_query,
+        bind_vars={
+            "indicator_value": query,
+            "indicator_type": indicator_type.lower()
+        },
+        batch_size=100,
+        count=False
+    )
+
+    if not cursor.has_more:
+        raise fastapi.HTTPException(status_code=404, detail=f"Не найдено результатов для такого {indicator_type}")
+
+    return [doc async for doc in cursor]
 
 
 @pytest.fixture
 async def async_client():
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=APP),
-        base_url="http://127.0.0.1:8000"
-    ) as client:
-        yield client
+    async with asgi_lifespan.LifespanManager(APP) as manager:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=APP),
+            base_url="http://127.0.0.1:8000"
+        ) as client:
+            yield client
 
 @pytest.mark.anyio
 async def test_search_should_accept_valid_url(async_client):
