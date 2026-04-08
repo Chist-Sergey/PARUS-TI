@@ -235,7 +235,7 @@ async def test_search_should_accept_mixed_case_query(async_client):
 @pytest.mark.anyio
 async def test_search_should_find_result(async_client):
     response = await async_client.get(
-        BASE_URL + "?query=example.com"
+        BASE_URL + "?query=do-not-delete-or-e2e-tests-will.fail"
     )
     assert 200 == response.status_code
 
@@ -256,7 +256,7 @@ async def test_search_should_return_dict(async_client):
 @pytest.mark.anyio
 async def test_search_should_return_list(async_client):
     response = await async_client.get(
-        BASE_URL + "?query=example.com"
+        BASE_URL + "?query=do-not-delete-or-e2e-tests-will.fail"
     )
     assert list == type(response.json())
 
