@@ -1,5 +1,4 @@
-fastapi
-uvicorn
+fastapi[standard]
 pytest
 httpx
 python-arango-async
