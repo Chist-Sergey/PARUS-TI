@@ -12,7 +12,10 @@ DATABASE_CONNECTIONS = {}
 @contextlib.asynccontextmanager
 async def lifespan(app: fastapi.FastAPI):
     client = arangoasync.ArangoClient(
-        hosts=["http://127.0.0.1:8529"]
+        hosts=[
+            "http://127.0.0.1:8529",
+            "http://arangodb:8529"
+        ]
     )
 
     system_db = await client.db(
