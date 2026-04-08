@@ -74,6 +74,10 @@ m: app-local
 v: venv-activate
 vv: venv-create
 d: docker-all-run
+dd: docker-app-restart
 db: docker-arangodb-restart
 r: requirements-install
 rr: docker-app-build
+t: test
+tt:
+	$(PYTHON) test_data.py
