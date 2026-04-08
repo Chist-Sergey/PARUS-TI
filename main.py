@@ -148,7 +148,7 @@ LET start_vertex = FIRST(
 
 FILTER start_vertex != NULL
 
-FOR v, e, p IN 1..2 ANY start_vertex._id GRAPH 'intelligence'
+FOR v, e, p IN 1..2 ANY start_vertex._id relations
     OPTIONS {
         bfs: true,
         uniqueVertices: 'global',
