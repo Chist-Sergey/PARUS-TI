@@ -169,10 +169,11 @@ FOR v, e, p IN 1..2 ANY start_vertex._id GRAPH 'intelligence'
         count=False
     )
 
-    if not cursor.has_more:
+    result = [doc async for doc in cursor]
+    if not result:
         raise fastapi.HTTPException(status_code=404, detail=f"Не найдено результатов для такого {indicator_type}")
 
-    return [doc async for doc in cursor]
+    return result
 
 
 @pytest.fixture
