@@ -71,35 +71,33 @@ async def test_data():
 
     insert_result = None
     try:
-        insert_result = await db.aql.execute(
-            """
-            LET indicators = @generated_indicators
+        insert_result = await db.aql.execute("""
+LET indicators = @generated_indicators
 
-            LET inserted = (
-                FOR i IN indicators
-                    INSERT {
-                        type: i.type,
-                        value: i.value
-                    }
-                    INTO indicators
-                    RETURN NEW
-            )
+LET inserted = (
+    FOR i IN indicators
+        INSERT {
+            type: i.type,
+            value: i.value
+        }
+        INTO indicators
+        RETURN NEW
+)
 
-            RETURN inserted
-            """,
+RETURN inserted
+""",
             bind_vars={"generated_indicators": generated_indicators},
             batch_size=100,
             count=False
         )
     except arangoasync.exceptions.ArangoError:
-        try:
-            yield
-        finally:
-            await client.close()
-        return
+        pass
 
-
-    inserted_docs = [doc async for doc in insert_result]
+    if not insert_result:
+        inserted_docs = [doc async for doc in await db.aql.execute("""
+        FOR doc IN indicators
+            RETURN doc
+    """)]
 
     ips = [doc for doc in inserted_docs if doc["type"] == "ip"]
     domains = [doc for doc in inserted_docs if doc["type"] == "domain"]
@@ -133,24 +131,23 @@ async def test_data():
         })
 
     try:
-        await db.aql.execute(
-            """
-            LET edges = @generated_edges
+        await db.aql.execute("""
+LET edges = @generated_edges
 
-            FOR e IN edges
-                UPSERT {
-                    _from: e._from,
-                    _to: e._to,
-                    type: e.type
-                }
-                INSERT {
-                    _from: e._from,
-                    _to: e._to,
-                    type: e.type
-                }
-                UPDATE {}
-                INTO relations
-            """,
+FOR e IN edges
+    UPSERT {
+        _from: e._from,
+        _to: e._to,
+        type: e.type
+    }
+    INSERT {
+        _from: e._from,
+        _to: e._to,
+        type: e.type
+    }
+    UPDATE {}
+    INTO relations
+""",
             bind_vars={"generated_edges": generated_edges},
             batch_size=100,
             count=False
