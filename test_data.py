@@ -1,8 +1,6 @@
 import arangoasync
-import arangoasync.exceptions
 import arangoasync.auth
 import asyncio
-import random
 import contextlib
 
 
@@ -50,7 +48,54 @@ async def test_data():
     # except arangoasync.exceptions.IndexCreateError:
     #     pass
 
-    generated_indicators = []
+    fixed_indicators = [
+        {
+            "type": "ip",
+            "value": "88.55.35.35"
+        },
+        {
+            "type": "domain",
+            "value": "do-not-delete-or-e2e-tests-will.fail"
+        },
+        {
+            "type": "url",
+            "value": "http://do-not-delete-or-e2e-tests-will.fail/terms"
+        },
+        {
+            "type": "url",
+            "value": "http://do-not-delete-or-e2e-tests-will.fail/privacy"
+        },
+        {
+            "type": "url",
+            "value": "http://do-not-delete-or-e2e-tests-will.fail/api"
+        },
+        {
+            "type": "hash",
+            "value": "71c81c1a9e3ff6a053896e12e8a04de20edc5fc5b5cc4702d7f09951823ffd60"
+        },
+        {
+            "type": "hash",
+            "value": "71c81c1a9e3ff6a053896e12e8a04de20edc5fc5b5cc4702d7f09951823ffd61"
+        },
+        {
+            "type": "hash",
+            "value": "71c81c1a9e3ff6a053896e12e8a04de20edc5fc5b5cc4702d7f09951823ffd62"
+        },
+        {
+            "type": "hash",
+            "value": "71c81c1a9e3ff6a053896e12e8a04de20edc5fc5b5cc4702d7f09951823ffd63"
+        },
+        {
+            "type": "hash",
+            "value": "71c81c1a9e3ff6a053896e12e8a04de20edc5fc5b5cc4702d7f09951823ffd64"
+        },
+        {
+            "type": "hash",
+            "value": "71c81c1a9e3ff6a053896e12e8a04de20edc5fc5b5cc4702d7f09951823ffd65"
+        },
+    ]
+
+    generated_indicators = [*fixed_indicators]
     for i in range(1, 255):
         generated_indicators.append({
             "type": "ip",
@@ -66,95 +111,104 @@ async def test_data():
         })
         generated_indicators.append({
             "type": "hash",
-            "value": f"a1b2c3d4e5f6{i}"
+            "value": f"71c81c1a9e3ff6a053896e12e8a04de20edc5fc5b5cc4702d7f09951823ff{i+100}"
         })
 
-    insert_result = None
-    try:
-        insert_result = await db.aql.execute("""
-LET indicators = @generated_indicators
-
-LET inserted = (
-    FOR i IN indicators
-        INSERT {
-            type: i.type,
-            value: i.value
-        }
-        INTO indicators
-        RETURN NEW
-)
-
-RETURN inserted
-""",
-            bind_vars={"generated_indicators": generated_indicators},
-            batch_size=100,
-            count=False
-        )
-    except arangoasync.exceptions.ArangoError:
-        pass
-
-    if not insert_result:
-        inserted_docs = [doc async for doc in await db.aql.execute("""
-        FOR doc IN indicators
-            RETURN doc
-    """)]
-
-    ips = [doc for doc in inserted_docs if doc["type"] == "ip"]
-    domains = [doc for doc in inserted_docs if doc["type"] == "domain"]
-    urls = [doc for doc in inserted_docs if doc["type"] == "url"]
-    hashes = [doc for doc in inserted_docs if doc["type"] == "hash"]
-
-    generated_edges = []
-
-    for ip in ips:
-        target_domain = random.choice(domains)
-        generated_edges.append({
-            "_from": ip["_id"],
-            "_to": target_domain["_id"],
-            "type": "resolves"
-        })
-
-    for domain in domains:
-        target_url = random.choice(urls)
-        generated_edges.append({
-            "_from": domain["_id"],
-            "_to": target_url["_id"],
-            "type": "hosted_on"
-        })
-
-    for url in urls:
-        target_hash = random.choice(hashes)
-        generated_edges.append({
-            "_from": url["_id"],
-            "_to": target_hash["_id"],
-            "type": "downloaded_from"
-        })
-
-    try:
-        await db.aql.execute("""
-LET edges = @generated_edges
-
-FOR e IN edges
-    UPSERT {
-        _from: e._from,
-        _to: e._to,
-        type: e.type
-    }
-    INSERT {
-        _from: e._from,
-        _to: e._to,
-        type: e.type
-    }
+    await db.aql.execute("""
+FOR i IN @indicators
+    UPSERT { type: i.type, value: i.value }
+    INSERT i
     UPDATE {}
-    INTO relations
+    INTO indicators
 """,
-            bind_vars={"generated_edges": generated_edges},
-            batch_size=100,
-            count=False
-        )
-    except arangoasync.exceptions.ArangoError:
-        pass
+        bind_vars={"indicators": generated_indicators},
+        batch_size=100,count=False
+    )
+    
 
+    await db.aql.execute("""
+FOR ip IN indicators
+    FILTER ip.type == "ip"
+
+    LET domain = FIRST(
+        FOR d IN indicators
+            FILTER d.type == "domain"
+            SORT RAND()
+            LIMIT 1
+            RETURN d
+    )
+
+    INSERT {
+        _from: ip._id,
+        _to: domain._id,
+        type: "resolves"
+    }
+    INTO relations
+    OPTIONS { ignoreErrors: true }
+""")
+
+    await db.aql.execute("""
+FOR d IN indicators
+    FILTER d.type == "domain"
+
+    LET url = FIRST(
+        FOR u IN indicators
+            FILTER u.type == "url"
+            SORT RAND()
+            LIMIT 1
+            RETURN u
+    )
+
+    INSERT {
+        _from: d._id,
+        _to: url._id,
+        type: "hosted_on"
+    }
+    INTO relations
+    OPTIONS { ignoreErrors: true }
+""")
+
+    await db.aql.execute("""
+FOR u IN indicators
+    FILTER u.type == "url"
+
+    LET h = FIRST(
+        FOR x IN indicators
+            FILTER x.type == "hash"
+            SORT RAND()
+            LIMIT 1
+            RETURN x
+    )
+
+    INSERT {
+        _from: u._id,
+        _to: h._id,
+        type: "downloaded_from"
+    }
+    INTO relations
+    OPTIONS { ignoreErrors: true }
+""")
+
+
+    await db.aql.execute("""
+FOR ip IN indicators
+    FILTER ip.type == "ip"
+    LET domain = FIRST(
+        FOR d IN indicators
+            FILTER d.type == "domain"
+            SORT RAND()
+            LIMIT 1
+            RETURN d
+    )
+    INSERT {
+        _from: ip._id,
+        _to: domain._id,
+        type: "resolves"
+    } INTO relations OPTIONS { ignoreErrors: true }
+""",
+        batch_size=100,
+        count=False
+    )
 
     try:
         yield
@@ -163,9 +217,8 @@ FOR e IN edges
 
 
 async def main():
-    print("Наполнение базы данных...")
     async with test_data():
-        print("База данных заполнена!")
+        pass
 
 
 if __name__ == "__main__":
