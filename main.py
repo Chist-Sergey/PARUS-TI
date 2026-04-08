@@ -4,6 +4,7 @@ import re
 import fastapi
 import contextlib
 import arangoasync
+import arangoasync.exceptions
 import arangoasync.auth
 import asgi_lifespan
 
@@ -34,29 +35,57 @@ async def lifespan(app: fastapi.FastAPI):
             username="root", password="root"
         )
     )
-    if not await db.has_graph("intelligence"):
-        await db.create_graph("intelligence")
 
-    graph = db.graph("intelligence")
-    if not await graph.has_vertex_collection("indicators"):
-        await graph.create_vertex_collection("indicators")
+    try:
+        await db.create_collection("indicators", col_type="document")
+    except arangoasync.exceptions.CollectionCreateError:
+        pass
 
-    if not await graph.has_edge_definition("relations"):
-        await graph.create_edge_definition(
-            edge_collection="relations",
-            from_vertex_collections=["indicators"],
-            to_vertex_collections=["indicators"]
+    try:
+        await db.create_collection("relations", col_type="edge")
+    except arangoasync.exceptions.CollectionCreateError:
+        pass
+
+    try:
+        await db.collection("indicators").add_index(
+            type="persistent",
+            fields=["type", "value"],
+            options={"unique": True}
         )
+    except arangoasync.exceptions.IndexCreateError:
+        pass
 
-    indicators = db.collection("indicators")
-    await indicators.add_index(
-        type="persistent",
-        fields=["hash", "value"],
-        options={
-            "unique":True,
-            "name": "my_index"
-        },
-    )
+#     await db.aql.execute("""
+# LET indicators = [
+# { type: "ip", value: "192.168.1.1" },
+# { type: "domain", value: "example.com" },
+# { type: "url", value: "https://example.com/page" },
+# { type: "hash", value: "a1b2c3d4e5f6" }
+# ]
+
+# LET docs = (
+# FOR i IN indicators
+#     UPSERT { type: i.type, value: i.value }
+#     INSERT i
+#     UPDATE {} IN indicators
+#     RETURN NEW
+# )
+
+# LET edges = [
+# { from: docs[0]._id, to: docs[1]._id, type: "resolves" },
+# { from: docs[1]._id, to: docs[2]._id, type: "hosted_on" },
+# { from: docs[2]._id, to: docs[3]._id, type: "downloaded_from" }
+# ]
+
+# FOR e IN edges
+# UPSERT { _from: e.from, _to: e.to, type: e.type }
+#     INSERT {
+#     _from: e.from,
+#     _to: e.to,
+#     type: e.type
+#     }
+#     UPDATE {} IN relations
+# """)
 
     DATABASE_CONNECTIONS["parus"] = db
 
@@ -143,10 +172,11 @@ FOR v, e, p IN 1..2 ANY start_vertex._id GRAPH 'intelligence'
         count=False
     )
 
-    if not cursor.has_more:
+    result = [doc async for doc in cursor]
+    if not result:
         raise fastapi.HTTPException(status_code=404, detail=f"Не найдено результатов для такого {indicator_type}")
 
-    return [doc async for doc in cursor]
+    return result
 
 
 @pytest.fixture
@@ -157,6 +187,15 @@ async def async_client():
             base_url="http://127.0.0.1:8000"
         ) as client:
             yield client
+
+@pytest.fixture
+async def async_connection():
+    async with asgi_lifespan.LifespanManager(APP) as manager:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=APP),
+            base_url="http://127.0.0.1:8529"
+        ) as connection:
+            yield connection
 
 @pytest.mark.anyio
 async def test_search_should_accept_valid_url(async_client):
@@ -180,6 +219,13 @@ async def test_search_should_accept_valid_domain(async_client):
     assert 404 == response.status_code
 
 @pytest.mark.anyio
+async def test_search_should_accept_valid_ip(async_client):
+    response = await async_client.get(
+        BASE_URL + "?query=192.168.9.1"
+    )
+    assert 404 == response.status_code
+
+@pytest.mark.anyio
 async def test_search_should_accept_mixed_case_query(async_client):
     response = await async_client.get(
         BASE_URL + "?query=CraZy.cOm"
@@ -189,7 +235,7 @@ async def test_search_should_accept_mixed_case_query(async_client):
 @pytest.mark.anyio
 async def test_search_should_find_result(async_client):
     response = await async_client.get(
-        BASE_URL + "?query=parus.ti"
+        BASE_URL + "?query=do-not-delete-or-e2e-tests-will.fail"
     )
     assert 200 == response.status_code
 
@@ -201,11 +247,18 @@ async def test_search_should_return_not_found(async_client):
     assert 404 == response.status_code
 
 @pytest.mark.anyio
+async def test_search_should_return_dict(async_client):
+    response = await async_client.get(
+        BASE_URL + "?query=b00b5.free"
+    )
+    assert dict == type(response.json())
+
+@pytest.mark.anyio
 async def test_search_should_return_list(async_client):
     response = await async_client.get(
-        BASE_URL + "?query=parus.ti"
+        BASE_URL + "?query=do-not-delete-or-e2e-tests-will.fail"
     )
-    assert type(response.json()) == list
+    assert list == type(response.json())
 
 @pytest.mark.anyio
 async def test_search_route_should_exist(async_client):
@@ -247,13 +300,6 @@ async def test_search_should_reject_invalid_url(async_client):
         BASE_URL + "?query=ftq://parus.ti"
     )
     assert 422 == response.status_code
-
-@pytest.mark.anyio
-async def test_search_should_return_graph(async_client):
-    response = await async_client.get(
-        BASE_URL + "?query=parus.ti"
-    )
-    assert response.json() is not None
 
 @pytest.mark.anyio
 async def test_search_should_reject_query_with_whitespace(async_client):
