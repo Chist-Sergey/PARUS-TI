@@ -185,6 +185,15 @@ async def async_client():
         ) as client:
             yield client
 
+@pytest.fixture
+async def async_connection():
+    async with asgi_lifespan.LifespanManager(APP) as manager:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=APP),
+            base_url="http://127.0.0.1:8529"
+        ) as connection:
+            yield connection
+
 @pytest.mark.anyio
 async def test_search_should_accept_valid_url(async_client):
     response = await async_client.get(
